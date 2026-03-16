@@ -1,6 +1,6 @@
 # ===== API Keys & Secrets =====
 .env
-config/.env
+!config/.env
 config/.env.example
 *.key
 *.pem
