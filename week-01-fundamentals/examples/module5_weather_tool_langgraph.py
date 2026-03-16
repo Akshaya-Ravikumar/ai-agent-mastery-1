@@ -30,10 +30,38 @@ from langgraph.graph import add_messages
 @tool
 def get_weather(city: str) -> str:
     """Get the current weather for a city using a free API."""
-    response = requests.get(f"https://wttr.in/{city}?format=%t+%C", timeout=10)
-    if response.status_code == 200:
-        return f"Weather in {city}: {response.text.strip()}"
-    return f"Could not fetch weather for {city}"
+    # Primary: Open-Meteo (free, no key, reliable)
+    try:
+        geo = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": city, "count": 1},
+            timeout=10,
+        ).json()
+        if geo.get("results"):
+            loc = geo["results"][0]
+            weather = requests.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={"latitude": loc["latitude"], "longitude": loc["longitude"], "current_weather": True},
+                timeout=10,
+            ).json()
+            cw = weather["current_weather"]
+            return f"Weather in {loc['name']}: {cw['temperature']}°C, wind {cw['windspeed']} km/h"
+    except Exception:
+        pass
+
+    # Fallback: wttr.in (can be slow/unreliable)
+    try:
+        response = requests.get(
+            f"https://wttr.in/{city}?format=%t+%C",
+            timeout=5,
+            headers={"User-Agent": "curl/7.68.0"},
+        )
+        if response.status_code == 200 and "Unknown" not in response.text:
+            return f"Weather in {city}: {response.text.strip()}"
+    except Exception:
+        pass
+
+    return f"Could not fetch weather for {city} (all sources unavailable)"
 
 
 @tool
@@ -73,8 +101,16 @@ class AgentState(TypedDict):
 
 def agent_node(state):
     """LLM decides whether to call a tool or respond directly."""
-    response = llm_with_tools.invoke(state["messages"])
-    return {"messages": [response]}
+    # Groq/Llama models can intermittently generate malformed tool calls,
+    # causing a 400 tool_use_failed error. Retry up to 3 times.
+    for attempt in range(3):
+        try:
+            response = llm_with_tools.invoke(state["messages"])
+            return {"messages": [response]}
+        except Exception as e:
+            if "tool_use_failed" in str(e) and attempt < 2:
+                continue
+            raise
 
 
 def should_continue(state):
