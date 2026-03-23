@@ -38,24 +38,51 @@ def fetch_weather(city: str) -> dict:
     # 3. Parse the JSON response
     # 4. Extract temperature and conditions
     # 5. Handle errors (timeout, invalid city, etc.)
-    pass
+
+    if not city or not city.strip(): 
+        raise ValueError("City is Empty!")
+    
+    try:
+      response = requests.get(f"https://wttr.in/{city}?format=j1", timeout=10)
+      response.raise_for_status()
+
+      data = response.json()
+
+      current_condition = data.get('current_condition')
+
+      if not current_condition:
+        raise ValueError('Current Condition missing in API response')
+      
+      current = current_condition[0]
+      return {
+          "city" : city,
+          "temperature_in_celcius": current["temp_C"],
+          "temperature_in_farenheit": current["temp_F"],
+          "humidity": current["humidity"],
+          "weather_description": current.get("weatherDesc")[0].get("value")
+      }
+
+    except requests.exceptions.Timeout:
+        raise ValueError("Request timed out")
+    except Exception as e:
+      raise ValueError(f"An unexpected error occurred while fetching weather for '{city}': {e}")
 
 
 # === Test your implementation ===
 if __name__ == "__main__":
     # Test 1: Valid city
     print("Test 1: London")
-    # result = fetch_weather("London")
-    # print(result)
+    result = fetch_weather("London")
+    print(result)
 
     # Test 2: Another valid city
     print("Test 2: Tokyo")
-    # result = fetch_weather("Tokyo")
-    # print(result)
+    result = fetch_weather("Tokyo")
+    print(result)
 
     # Test 3: Error handling - empty city
     print("Test 3: Empty city (should raise ValueError)")
-    # try:
-    #     result = fetch_weather("")
-    # except ValueError as e:
-    #     print(f"Caught error: {e}")
+    try:
+       result = fetch_weather("")
+    except ValueError as e:
+       print(f"Caught error: {e}")
