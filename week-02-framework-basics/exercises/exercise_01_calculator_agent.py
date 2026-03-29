@@ -33,10 +33,10 @@ load_dotenv()
 
 from langchain_core.tools import tool
 from langchain_core.messages import HumanMessage
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, add_messages, START
 from langgraph.prebuilt import ToolNode
 from typing import TypedDict, Annotated
-from langgraph.graph import add_messages
+
 
 
 # ── Step 1: Define calculator tools ─────────────────────────
@@ -48,7 +48,7 @@ def add(a: float, b: float) -> str:
     """Add two numbers together. Example: add(15, 27) returns '15 + 27 = 42'"""
     # TODO: Implement addition
     # Return a string like "15.0 + 27.0 = 42.0"
-    pass
+    return f"{a} + {b} = {a + b}"
 
 
 @tool
@@ -56,7 +56,7 @@ def multiply(a: float, b: float) -> str:
     """Multiply two numbers. Example: multiply(8, 12) returns '8 * 12 = 96'"""
     # TODO: Implement multiplication
     # Return a string like "8.0 * 12.0 = 96.0"
-    pass
+    return f"{a} * {b} = {a * b}"
 
 
 @tool
@@ -68,7 +68,9 @@ def divide(a: float, b: float) -> str:
     # 1. Check if b is zero — if so, return an error message string
     #    (DON'T raise an exception — return a friendly error message)
     # 2. Otherwise, return the result as a string
-    pass
+    if b==0:
+        return "Error: Cannot divide by zero"
+    return f"{a} / {b} = {a / b}"
 
 
 # ── Step 2: Set up the LLM ─────────────────────────────────
@@ -80,17 +82,24 @@ tools = [add, multiply, divide]
 
 # TODO: Create llm (ChatGroq or ChatOpenAI based on provider)
 # llm = ...
+provider = os.getenv("LLM_PROVIDER", "groq").lower()
+if provider == "groq":
+    from langchain_groq import ChatGroq
+    llm = ChatGroq(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"))
+else:
+    from langchain_openrouter import ChatOpenRouter
+    llm = ChatOpenRouter(model=os.getenv("OPEN_ROUTER_MODEL", "gpt-4o-mini"))
 
 # TODO: Bind tools to the LLM
 # llm_with_tools = llm.bind_tools(tools)
-
+llm_with_tools = llm.bind_tools(tools)
 
 # ── Step 3: Define the state ────────────────────────────────
 # TODO: Create AgentState TypedDict with:
 #   - messages: Annotated[list, add_messages]
 
-# class AgentState(TypedDict):
-#     ...
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]
 
 
 # ── Step 4: Define the agent node ──────────────────────────
@@ -99,8 +108,14 @@ tools = [add, multiply, divide]
 #   2. Returns {"messages": [response]}
 #   3. (Bonus) Add retry logic for malformed tool calls
 
-# def agent_node(state):
-#     ...
+def agent_node(state):
+    for attempt in range(3):
+        try:
+            response = llm_with_tools.invoke(state["messages"])
+            return {"messages": [response]}
+        except Exception as e:
+            print(f" error occured {e}")
+            raise
 
 
 # ── Step 5: Define the routing function ─────────────────────
@@ -108,8 +123,11 @@ tools = [add, multiply, divide]
 #   1. Checks if the last message has tool_calls
 #   2. Returns "tools" if yes, "end" if no
 
-# def should_continue(state):
-#     ...
+def should_continue(state):
+    last_message = state["messages"][-1]
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        return "tools"
+    return "end"
 
 
 # ── Step 6: Build the graph ─────────────────────────────────
@@ -121,9 +139,16 @@ tools = [add, multiply, divide]
 #   5. Add edge from "tools" → "agent"
 #   6. Compile the graph
 
-# graph = StateGraph(AgentState)
-# ...
-# app = graph.compile()
+graph = StateGraph(AgentState)
+
+graph.add_node("agent", agent_node)
+graph.add_node("tools", ToolNode(tools))
+
+graph.add_edge(START, "agent")
+graph.add_conditional_edges("agent", should_continue, {"tools": "tools", "end": END})
+graph.add_edge("tools", "agent")
+
+app = graph.compile()
 
 
 # ── Test your implementation ────────────────────────────────
@@ -134,23 +159,23 @@ if __name__ == "__main__":
 
     # Test 1: Simple addition
     print("\nTest 1: What is 15 + 27?")
-    # result = app.invoke({
-    #     "messages": [HumanMessage(content="What is 15 + 27?")],
-    # })
-    # print(f"Agent: {result['messages'][-1].content}")
+    result = app.invoke({
+        "messages": [HumanMessage(content="What is 15 + 27?")],
+    })
+    print(f"Agent: {result['messages'][-1].content}")
 
     # Test 2: Multi-step calculation (requires chaining)
     print("\nTest 2: Multiply 8 by 12, then add 5 to the result")
-    # result = app.invoke({
-    #     "messages": [HumanMessage(content="Multiply 8 by 12, then add 5 to the result")],
-    # })
-    # print(f"Agent: {result['messages'][-1].content}")
+    result = app.invoke({
+         "messages": [HumanMessage(content="Multiply 8 by 12, then add 5 to the result")],
+    })
+    print(f"Agent: {result['messages'][-1].content}")
 
     # Test 3: Division by zero (should handle gracefully!)
     print("\nTest 3: Divide 100 by 0")
-    # result = app.invoke({
-    #     "messages": [HumanMessage(content="Divide 100 by 0")],
-    # })
-    # print(f"Agent: {result['messages'][-1].content}")
+    result = app.invoke({
+        "messages": [HumanMessage(content="Divide 100 by 0")],
+    })
+    print(f"Agent: {result['messages'][-1].content}")
 
     print("\n(Uncomment the test code above after implementing!)")
